@@ -91,6 +91,36 @@ static EventGroupHandle_t s_wifi_event_group;
 
 esp_netif_t *esp_default_netif;
 
+#define _STATIC_IP_ADDR "192.168.0.5"
+#define _STATIC_NETMASK_ADDR "255.255.255.0"
+#define _STATIC_GW_ADDR "192.168.0.254"
+
+
+/**
+ * Set static IP address to a board
+ *
+ * @param netif
+ */
+static void _set_static_ip(esp_netif_t *netif)
+{
+    if (esp_netif_dhcpc_stop(netif) != ESP_OK) // <<Before was -->> if (esp_netif_dhcps_stop(netif) != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to stop dhcp client");
+        return;
+    }
+    esp_netif_ip_info_t ip;
+    memset(&ip, 0 , sizeof(esp_netif_ip_info_t));
+    ip.ip.addr = ipaddr_addr(_STATIC_IP_ADDR);
+    ip.netmask.addr = ipaddr_addr(_STATIC_NETMASK_ADDR);
+    ip.gw.addr = ipaddr_addr(_STATIC_GW_ADDR);
+    if (esp_netif_set_ip_info(netif, &ip) != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to set ip info");
+        return;
+    }
+    ESP_LOGD(TAG, "Success to set static ip: %s, netmask: %s, gw: %s", _STATIC_IP_ADDR, _STATIC_NETMASK_ADDR, _STATIC_GW_ADDR);
+}
+
 /**
  * Devices get added based on IP (check if IP & PORT are already listed) and removed from the UDP broadcast connection
  * based on MAC address
@@ -141,6 +171,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
             ESP_LOGI(TAG,"Connecting to the AP failed");
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED)
+    {
+        // Setting static IP on start WI-FI
+        _set_static_ip(arg);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "WIFI_EVENT - Got IP:" IPSTR, IP2STR(&event->ip_info.ip));
@@ -285,6 +319,7 @@ int init_wifi_clientmode() {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_default_netif = esp_netif_create_default_wifi_sta();
+    assert(esp_default_netif);
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     esp_event_handler_instance_t instance_any_id;
@@ -292,28 +327,22 @@ int init_wifi_clientmode() {
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
                                                         ESP_EVENT_ANY_ID,
                                                         &wifi_event_handler,
-                                                        NULL,
+                                                        esp_default_netif,
                                                         &instance_any_id));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
                                                         IP_EVENT_STA_GOT_IP,
                                                         &wifi_event_handler,
-                                                        NULL,
+                                                        esp_default_netif,
                                                         &instance_got_ip));
 
-    wifi_config_t wifi_config = {
-            .sta = {
-                    .ssid = "DroneBridge_ESP32_Init",
-                    .password = "dronebridge",
-                    .threshold.authmode = WIFI_AUTH_WEP
-            },
-    };
+    wifi_config_t wifi_config = { .sta = {}, };
     strncpy((char *)wifi_config.sta.ssid, (char *)DB_WIFI_SSID, 32);
     strncpy((char *)wifi_config.sta.password, (char *)DB_WIFI_PWD, 64);
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_LR));
+    // ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_LR));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
-    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    // ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_LOGI(TAG, "Init of WiFi Client-Mode finished. (SSID: %s PASS: %s)", DB_WIFI_SSID, DB_WIFI_PWD);

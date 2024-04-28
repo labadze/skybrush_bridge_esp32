@@ -40,6 +40,8 @@
 
 #define TAG "DB_CONTROL"
 
+#define UDP_LISTEN_PORT 14555
+
 uint16_t app_port_proxy = APP_PORT_PROXY;
 
 int8_t num_connected_tcp_clients = 0;
@@ -74,6 +76,39 @@ int open_udp_socket() {
     ESP_LOGI(TAG, "Opened UDP socket on port %i", APP_PORT_PROXY_UDP);
     return udp_socket;
 }
+
+
+/**
+ * Opens non-blocking UDP socket for listening
+ * @return returns socket file descriptor
+ */
+int open_udp_listen_socket() {
+    char addr_str[128];
+    int addr_family;
+    int ip_protocol;
+
+    struct sockaddr_in server_addr;
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(UDP_LISTEN_PORT);
+    addr_family = AF_INET;
+    ip_protocol = IPPROTO_IP;
+    inet_ntoa_r(server_addr.sin_addr, addr_str, sizeof(addr_str) - 1);
+
+    int udp_socket = socket(addr_family, SOCK_DGRAM, ip_protocol);
+    if (udp_socket < 0) {
+        ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+        return -1;
+    }
+    int err = bind(udp_socket, (struct sockaddr *) &server_addr, sizeof(server_addr));
+    if (err < 0) {
+        ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
+    }
+    fcntl(udp_socket, F_SETFL, O_NONBLOCK);
+    ESP_LOGI(TAG, "Opened UDP socket on port %i", UDP_LISTEN_PORT);
+    return udp_socket;
+}
+
 
 void send_to_all_udp_clients(struct udp_conn_list_t *n_udp_conn_list, const uint8_t *data, uint data_length) {
     for (int i = 0; i < n_udp_conn_list->size; i++) {  // send to all UDP clients
@@ -322,6 +357,8 @@ _Noreturn void control_module_udp_tcp() {
     }
 
     udp_conn_list->udp_socket = open_udp_socket();
+    // UDP socket for receive
+    udp_conn_list->udp_socket = open_udp_listen_socket();
     uint8_t udp_buffer[UDP_BUF_SIZE];
     struct db_udp_client_t new_db_udp_client = {0};
     socklen_t udp_socklen = sizeof(new_db_udp_client.udp_client);
